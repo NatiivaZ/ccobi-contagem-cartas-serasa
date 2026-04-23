@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
-"""
-Interface gráfica para Contagem de Cartas – Autos de Infração.
-Permite escolher planilha, pasta de saída e exibe o resumo dos resultados.
+"""Interface gráfica da contagem de cartas.
+
+Serve para escolher a planilha, aplicar o filtro de datas e gerar o arquivo
+final sem precisar rodar pela linha de comando.
 """
 
 import os
@@ -12,7 +13,7 @@ from tkinter import ttk, filedialog, messagebox
 from pathlib import Path
 from datetime import date
 
-# Garantir que o diretório do script está no path
+# Garante que a GUI consiga importar o módulo principal mesmo abrindo direto pelo arquivo.
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
@@ -25,7 +26,7 @@ from contagem_cartas import (
 )
 
 
-# Cores e estilo (tema claro e profissional)
+# Paleta usada na interface.
 CORES = {
     "fundo": "#f1f5f9",
     "card": "#ffffff",
@@ -40,7 +41,7 @@ CORES = {
 
 
 def abrir_pasta(caminho):
-    """Abre a pasta no explorador de arquivos do Windows."""
+    """Abre a pasta do resultado no explorador do Windows."""
     caminho = Path(caminho)
     if caminho.is_file():
         caminho = caminho.parent
@@ -62,7 +63,7 @@ class AppContagemCartas(tk.Tk):
         self.arquivo_gerado = None
         self.totais = None
         self._em_processamento = False
-        # Filtro de datas (preenchido ao carregar planilha)
+        # O filtro é montado depois que a planilha é lida.
         self.datas_unicas = []  # lista de date
         self.meses_anos = []   # lista de (mes, ano)
         self.filtro_modo = tk.StringVar(value="todos")  # "todos" | "mes" | "datas"
@@ -75,7 +76,7 @@ class AppContagemCartas(tk.Tk):
         self.estilo = ttk.Style(self)
         self.estilo.theme_use("clam")
 
-        # Botão primário
+        # Estilo do botão principal.
         self.estilo.configure(
             "Primario.TButton",
             font=("Segoe UI", 10, "bold"),
@@ -88,7 +89,7 @@ class AppContagemCartas(tk.Tk):
             background=[("active", CORES["primaria_hover"]), ("disabled", CORES["texto_secundario"])],
         )
 
-        # Frame com aparência de card
+        # Estilo dos blocos da tela.
         self.estilo.configure(
             "Card.TFrame",
             background=CORES["card"],
@@ -113,11 +114,11 @@ class AppContagemCartas(tk.Tk):
         )
 
     def _criar_widgets(self):
-        # Padding geral
+        # Container principal da janela.
         container = ttk.Frame(self, padding=24)
         container.pack(fill=tk.BOTH, expand=True)
 
-        # Título
+        # Cabeçalho da tela.
         ttk.Label(
             container,
             text="Contagem de Cartas",
@@ -129,7 +130,7 @@ class AppContagemCartas(tk.Tk):
             style="Subtitulo.TLabel",
         ).pack(anchor=tk.W, pady=(0, 16))
 
-        # Card: Arquivo
+        # Bloco da planilha de entrada.
         frame_arquivo = ttk.Frame(container, style="Card.TFrame", padding=16)
         frame_arquivo.pack(fill=tk.X, pady=(0, 12))
         ttk.Label(frame_arquivo, text="Planilha Excel (.xlsx)", style="Card.TLabel").pack(anchor=tk.W)
@@ -143,7 +144,7 @@ class AppContagemCartas(tk.Tk):
             command=self._selecionar_planilha,
         ).pack(side=tk.RIGHT)
 
-        # Card: Pasta de saída (opcional)
+        # Bloco da pasta de saída.
         frame_pasta = ttk.Frame(container, style="Card.TFrame", padding=16)
         frame_pasta.pack(fill=tk.X, pady=(0, 12))
         ttk.Label(
@@ -161,7 +162,7 @@ class AppContagemCartas(tk.Tk):
             command=self._selecionar_pasta,
         ).pack(side=tk.RIGHT)
 
-        # Card: Filtro de datas
+        # Bloco do filtro de datas.
         frame_filtro = ttk.Frame(container, style="Card.TFrame", padding=16)
         frame_filtro.pack(fill=tk.X, pady=(0, 12))
         ttk.Label(
@@ -233,7 +234,7 @@ class AppContagemCartas(tk.Tk):
         ttk.Button(row_btns, text="Desmarcar todas", command=self._datas_desmarcar_todas).pack(side=tk.LEFT)
         self._atualizar_visibilidade_filtro()
 
-        # Botão Processar
+        # Botão que dispara o processamento em thread.
         self.btn_processar = ttk.Button(
             container,
             text="Processar e gerar resultado",
@@ -242,7 +243,7 @@ class AppContagemCartas(tk.Tk):
         )
         self.btn_processar.pack(pady=16, ipadx=12, ipady=6)
 
-        # Área de resultado (card)
+        # Área onde o resumo e o status aparecem.
         self.frame_resultado = ttk.Frame(container, style="Card.TFrame", padding=16)
         self.frame_resultado.pack(fill=tk.BOTH, expand=True)
         self.label_status = ttk.Label(
@@ -316,7 +317,7 @@ class AppContagemCartas(tk.Tk):
             return
         n = len(self.datas_unicas)
         self.label_filtro_status.configure(text=f"{n} data(s) encontrada(s). Escolha como filtrar abaixo.")
-        # Preencher combobox de mês (Jan/2024, Fev/2024, ...)
+        # O combobox usa o formato curto de mês para ficar mais prático na tela.
         MESES = ("Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez")
         valores_mes = [
             f"{MESES[m - 1]}/{a}" for m, a in self.meses_anos
@@ -324,7 +325,7 @@ class AppContagemCartas(tk.Tk):
         self.combo_mes["values"] = valores_mes
         if valores_mes:
             self.combo_mes.current(0)
-        # Preencher listbox de datas (dd/mm/aaaa)
+        # A lista mostra cada data já formatada.
         for d in self.datas_unicas:
             self.listbox_datas.insert(tk.END, d.strftime("%d/%m/%Y"))
         self._atualizar_visibilidade_filtro()
@@ -341,7 +342,7 @@ class AppContagemCartas(tk.Tk):
         self.listbox_datas.selection_clear(0, tk.END)
 
     def _obter_datas_selecionadas(self):
-        """Retorna None (todos) ou lista de date conforme o filtro escolhido."""
+        """Lê o filtro atual e devolve as datas que entram no processamento."""
         modo = self.filtro_modo.get()
         if modo == "todos":
             return None

@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""
-Automação: Contagem de Cartas a partir de planilha de autos de infração.
-Regra: 1-10 autos (mesmo CPF/CNPJ, mesmo dia) = 1 carta; 11-20 = 2 cartas; etc.
-Contagem por dia (não soma entre dias). Sem duplicar Número do auto.
+"""Contagem de cartas a partir da planilha de autos.
+
+A regra continua a mesma do processo atual: conta por dia, por documento e sem
+repetir o número do auto.
 """
 
 import json
@@ -14,24 +14,78 @@ from datetime import datetime, timedelta
 import pandas as pd
 
 
-# Caminho do arquivo de configuração das colunas
+# O JSON fica junto do script porque normalmente é ajustado na própria pasta do projeto.
 CONFIG_PATH = Path(__file__).parent / "config_colunas.json"
+DEFAULT_CONFIG = {
+    "numero_auto": "Número do auto",
+    "data_inscricao": "Data de inscrição",
+    "cpf_cnpj": "CPF/CNPJ",
+}
 
 
 def carregar_config():
-    """Carrega nomes das colunas do JSON. Se não existir, usa padrão."""
+    """Lê a configuração das colunas e cai no padrão se o arquivo não existir."""
     if CONFIG_PATH.exists():
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
             return json.load(f)
+    return DEFAULT_CONFIG.copy()
+
+
+def _ler_planilha(caminho_excel):
+    """Lê a planilha e dá uma limpada básica nos nomes das colunas."""
+    df = pd.read_excel(caminho_excel, engine="openpyxl")
+    df.columns = df.columns.str.strip()
+    return df
+
+
+def _validar_colunas(df, colunas):
+    """Confere se a planilha trouxe todas as colunas que o processo precisa."""
+    for coluna in colunas:
+        if coluna not in df.columns:
+            raise ValueError(f'Coluna "{coluna}" não encontrada na planilha. Colunas: {list(df.columns)}')
+
+
+def _formatar_data_saida(valor):
+    """Padroniza a data para o formato que já vai para os relatórios."""
+    if valor is None or (hasattr(valor, "__len__") and len(str(valor)) == 0):
+        return ""
+    if hasattr(valor, "strftime"):
+        return valor.strftime("%d/%m/%Y")
+    return str(valor)
+
+
+def _montar_totais(total_cartas, total_autos, linhas_sem_data, linhas_invalidas, autos_duplicados_removidos):
+    """Junta os totais em um único dicionário para não espalhar esse resumo."""
     return {
-        "numero_auto": "Número do auto",
-        "data_inscricao": "Data de inscrição",
-        "cpf_cnpj": "CPF/CNPJ",
+        "total_cartas": int(total_cartas),
+        "total_autos": int(total_autos),
+        "linhas_ignoradas_sem_data": int(linhas_sem_data),
+        "linhas_data_invalida": int(linhas_invalidas),
+        "autos_duplicados_removidos": int(autos_duplicados_removidos),
     }
 
 
+def _emitir_resumo_console(out_path, totais, linhas_inv, por_dia):
+    """Mostra no console o mesmo resumo que o usuário já espera na versão CLI."""
+    if linhas_inv:
+        print(
+            f"Atenção: {len(linhas_inv)} linha(s) com data inválida (foram ignoradas). "
+            f"Linhas: {linhas_inv[:20]}{'...' if len(linhas_inv) > 20 else ''}"
+        )
+
+    if por_dia is not None and not por_dia.empty:
+        soma_cartas_dia = int(por_dia["cartas"].sum())
+        if soma_cartas_dia != totais["total_cartas"]:
+            print(f"Aviso: soma das cartas por dia ({soma_cartas_dia}) ≠ total geral ({totais['total_cartas']})")
+        else:
+            print("Verificação: soma por dia = total geral (OK)")
+
+    print(f"Resultado salvo em: {out_path}")
+    print(f"Total de cartas: {totais['total_cartas']} | Total de autos (únicos): {totais['total_autos']}")
+
+
 def normalizar_cpf_cnpj(val):
-    """Comparação por apenas dígitos (ignora pontos, traços, barras, espaços)."""
+    """Deixa o documento só com números para o agrupamento não depender de máscara."""
     if pd.isna(val):
         return None
     s = str(val).strip()
@@ -42,12 +96,16 @@ def normalizar_cpf_cnpj(val):
 
 
 def parsear_data(val):
-    """Converte para data. Aceita dd/mm/aaaa, datetime ou número serial do Excel. Retorna (date ou None, inválido: bool)."""
+    """Tenta transformar o valor em data.
+
+    Aceita texto, `datetime` e também número serial do Excel. O retorno segue no
+    formato `(data, data_invalida)` porque o processo usa as duas informações.
+    """
     if pd.isna(val):
         return None, False
     if isinstance(val, datetime):
         return val.date(), False
-    # Excel às vezes lê data como número serial (dias desde 1899-12-30); só aceita faixa plausível
+    # Em algumas planilhas a data vem como número serial do Excel.
     if isinstance(val, (int, float)):
         v = int(val)
         if 1 <= v <= 2958465:  # 1 = 1900-01-01, 2958465 ≈ ano 9999
@@ -60,7 +118,7 @@ def parsear_data(val):
     s = str(val).strip()
     if not s:
         return None, False
-    # dd/mm/aaaa ou dd-mm-aaaa
+    # Se veio como texto, tenta os formatos mais comuns das planilhas daqui.
     for sep in ["/", "-"]:
         parts = s.split(sep)
         if len(parts) == 3:
@@ -72,22 +130,16 @@ def parsear_data(val):
                 return dt, False
             except (ValueError, TypeError):
                 pass
-    return None, True  # inválido
+    return None, True
 
 
 def extrair_datas_planilha(caminho_excel, config=None):
-    """
-    Lê a planilha e retorna as datas únicas (válidas) da coluna de data de inscrição,
-    ordenadas. Útil para a GUI exibir filtro por mês ou por datas específicas.
-    Retorna: (lista de date, lista de (mes, ano) únicos para dropdown de mês).
-    """
+    """Lê a planilha e devolve as datas válidas usadas no filtro da interface."""
     if config is None:
         config = carregar_config()
     col_data = config["data_inscricao"]
-    df = pd.read_excel(caminho_excel, engine="openpyxl")
-    df.columns = df.columns.str.strip()
-    if col_data not in df.columns:
-        raise ValueError(f'Coluna "{col_data}" não encontrada. Colunas: {list(df.columns)}')
+    df = _ler_planilha(caminho_excel)
+    _validar_colunas(df, [col_data])
     datas_parsed = df[col_data].map(parsear_data)
     datas_ok = [x[0] for x in datas_parsed if x[0] is not None]
     datas_unicas = sorted(set(datas_ok))
@@ -96,117 +148,97 @@ def extrair_datas_planilha(caminho_excel, config=None):
 
 
 def processar_planilha(caminho_excel, config=None, datas_selecionadas=None):
-    """
-    Lê o Excel, limpa dados, remove autos duplicados por número,
-    agrupa por (data, CPF/CNPJ) e calcula cartas por dia.
-    datas_selecionadas: set ou lista de date para filtrar (só processa essas datas); None = todas.
-    Retorna (df_por_dia, df_por_cnpj, df_por_cnpj_dia, totais, linhas_invalidas).
-    """
+    """Processa a planilha inteira e devolve os DataFrames usados na exportação."""
     if config is None:
         config = carregar_config()
     col_auto = config["numero_auto"]
     col_data = config["data_inscricao"]
     col_cpf = config["cpf_cnpj"]
 
-    df = pd.read_excel(caminho_excel, engine="openpyxl")
-    # Garantir nomes de coluna como estão no arquivo (strip)
-    df.columns = df.columns.str.strip()
+    df = _ler_planilha(caminho_excel)
+    _validar_colunas(df, [col_auto, col_data, col_cpf])
 
-    for c in [col_auto, col_data, col_cpf]:
-        if c not in df.columns:
-            raise ValueError(f'Coluna "{c}" não encontrada na planilha. Colunas: {list(df.columns)}')
-
-    # Normalizar CPF/CNPJ
+    # O agrupamento trabalha com documento limpo para evitar diferença só de máscara.
     df["_cpf_cnpj_norm"] = df[col_cpf].map(normalizar_cpf_cnpj)
-    # Datas
+
+    # A data já sai em um formato pronto para filtro e agrupamento.
     datas_parsed = df[col_data].map(parsear_data)
     df["_data"] = [x[0] for x in datas_parsed]
     df["_data_invalida"] = [x[1] for x in datas_parsed]
 
-    # Ignorar linhas sem data
+    # Sem data não entra na conta.
     df_ok = df[df["_data"].notna()].copy()
     linhas_invalidas = df[df["_data_invalida"]].index.tolist()
 
-    # Ignorar linhas sem CPF/CNPJ válido
+    # Documento vazio ou inválido também não ajuda no agrupamento.
     df_ok = df_ok[df_ok["_cpf_cnpj_norm"].notna()]
 
-    # Filtro por datas (mês ou datas específicas)
+    # Quando a GUI manda um recorte, filtra antes de deduplicar.
     if datas_selecionadas is not None:
         set_datas = set(datas_selecionadas)
         df_ok = df_ok[df_ok["_data"].isin(set_datas)]
 
     n_antes_dedup = len(df_ok)
-    # Remover duplicados por Número do auto (manter primeira ocorrência)
+    # O mesmo auto só pode contar uma vez.
     df_ok = df_ok.drop_duplicates(subset=[col_auto], keep="first")
     autos_duplicados_removidos = n_antes_dedup - len(df_ok)
 
     if df_ok.empty:
-        totais_vazio = {
-            "total_cartas": 0,
-            "total_autos": 0,
-            "linhas_ignoradas_sem_data": len(df[df["_data"].isna()]),
-            "linhas_data_invalida": len(linhas_invalidas),
-            "autos_duplicados_removidos": autos_duplicados_removidos,
-        }
+        totais_vazio = _montar_totais(
+            total_cartas=0,
+            total_autos=0,
+            linhas_sem_data=len(df[df["_data"].isna()]),
+            linhas_invalidas=len(linhas_invalidas),
+            autos_duplicados_removidos=autos_duplicados_removidos,
+        )
         return None, None, None, totais_vazio, linhas_invalidas
 
-    # Agrupar por (data, cpf_cnpj) e contar autos (já únicos por número do auto)
+    # Nesse ponto os autos já estão limpos e únicos, então o agrupamento fica direto.
     agrupado = (
         df_ok.groupby(["_data", "_cpf_cnpj_norm"], as_index=False)
         .agg(autos=(col_auto, "count"))
         .rename(columns={"autos": "autos"})
     )
-    # Cartas: teto(autos/10)
+    # Regra da carta: cada bloco de até 10 autos vira 1 carta.
     agrupado["cartas"] = agrupado["autos"].apply(lambda n: math.ceil(n / 10))
 
-    # --- Total por dia ---
+    # Resumo por dia.
     por_dia = (
         agrupado.groupby("_data", as_index=False)
         .agg(cartas=("cartas", "sum"), autos=("autos", "sum"))
         .rename(columns={"_data": "data"})
     )
-    # Formato dd/mm/aaaa na saída (padrão combinado)
-    def fmt_data(d):
-        if d is None or (hasattr(d, '__len__') and len(str(d)) == 0):
-            return ""
-        if hasattr(d, 'strftime'):
-            return d.strftime("%d/%m/%Y")
-        return str(d)
-    por_dia["data"] = por_dia["data"].map(fmt_data)
+    por_dia["data"] = por_dia["data"].map(_formatar_data_saida)
 
-    # --- Total por CNPJ (todo o período) ---
+    # Resumo por documento no período inteiro.
     por_cnpj = (
         agrupado.groupby("_cpf_cnpj_norm", as_index=False)
         .agg(cartas=("cartas", "sum"), autos=("autos", "sum"))
         .rename(columns={"_cpf_cnpj_norm": "cpf_cnpj"})
     )
 
-    # --- Por CNPJ por dia ---
+    # Detalhe diário por documento.
     por_cnpj_dia = agrupado.copy()
-    por_cnpj_dia["data"] = por_cnpj_dia["_data"].map(fmt_data)
+    por_cnpj_dia["data"] = por_cnpj_dia["_data"].map(_formatar_data_saida)
     por_cnpj_dia = por_cnpj_dia.rename(columns={"_cpf_cnpj_norm": "cpf_cnpj"})[["data", "cpf_cnpj", "autos", "cartas"]]
 
     total_cartas = int(agrupado["cartas"].sum())
     total_autos = int(df_ok[col_auto].count())
 
     linhas_sem_data = (df["_data"].isna()).sum() if "_data" in df.columns else 0
-    totais = {
-        "total_cartas": total_cartas,
-        "total_autos": total_autos,
-        "linhas_ignoradas_sem_data": int(linhas_sem_data),
-        "linhas_data_invalida": len(linhas_invalidas),
-        "autos_duplicados_removidos": autos_duplicados_removidos,
-    }
+    totais = _montar_totais(
+        total_cartas=total_cartas,
+        total_autos=total_autos,
+        linhas_sem_data=linhas_sem_data,
+        linhas_invalidas=len(linhas_invalidas),
+        autos_duplicados_removidos=autos_duplicados_removidos,
+    )
 
     return por_dia, por_cnpj, por_cnpj_dia, totais, linhas_invalidas
 
 
 def exportar_resultados(caminho_excel, pasta_saida=None, config=None, datas_selecionadas=None):
-    """
-    Processa o Excel e grava resultados em uma nova planilha no mesmo arquivo
-    (ou em arquivo de saída) com abas: Resumo, Por dia, Por CNPJ, Por CNPJ por dia.
-    datas_selecionadas: set ou lista de date para filtrar; None = processar todas as datas.
-    """
+    """Processa a planilha e grava o resultado final em um novo arquivo Excel."""
     caminho = Path(caminho_excel)
     if not caminho.exists():
         raise FileNotFoundError(f"Arquivo não encontrado: {caminho_excel}")
@@ -221,7 +253,7 @@ def exportar_resultados(caminho_excel, pasta_saida=None, config=None, datas_sele
         out_path = caminho.parent / (caminho.stem + "_resultado_cartas.xlsx")
 
     with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
-        # Resumo
+        # A aba Resumo vem primeiro porque costuma ser a mais consultada.
         resumo = pd.DataFrame([
             ["Total de cartas", totais["total_cartas"]],
             ["Total de autos (únicos)", totais["total_autos"]],
@@ -236,19 +268,7 @@ def exportar_resultados(caminho_excel, pasta_saida=None, config=None, datas_sele
             por_cnpj.to_excel(writer, sheet_name="Por CNPJ", index=False)
             por_cnpj_dia.to_excel(writer, sheet_name="Por CNPJ por dia", index=False)
 
-    if linhas_inv:
-        print(f"Atenção: {len(linhas_inv)} linha(s) com data inválida (foram ignoradas). Linhas: {linhas_inv[:20]}{'...' if len(linhas_inv) > 20 else ''}")
-
-    # Verificação: soma por dia deve bater com total geral
-    if por_dia is not None and not por_dia.empty:
-        soma_cartas_dia = int(por_dia["cartas"].sum())
-        if soma_cartas_dia != totais["total_cartas"]:
-            print(f"Aviso: soma das cartas por dia ({soma_cartas_dia}) ≠ total geral ({totais['total_cartas']})")
-        else:
-            print("Verificação: soma por dia = total geral (OK)")
-
-    print(f"Resultado salvo em: {out_path}")
-    print(f"Total de cartas: {totais['total_cartas']} | Total de autos (únicos): {totais['total_autos']}")
+    _emitir_resumo_console(out_path, totais, linhas_inv, por_dia)
     return out_path, totais
 
 
