@@ -1,0 +1,47 @@
+PROPRIETARY SOFTWARE LICENSE — ALL RIGHTS RESERVED
+
+Copyright (c) 2024-2026 Ruan Natividade (GitHub: NatiivaZ)
+All rights reserved.
+
+1. PURPOSE
+   This repository is published as a professional portfolio sample so that
+   recruiters and evaluators may review the author's workmanship, structure
+   and approach. It is NOT software released for public use, redistribution
+   or production deployment by third parties.
+
+2. PERMITTED
+   - Viewing the source code on GitHub
+   - Forking within GitHub solely for personal study / evaluation
+   - Citing this repository in a CV, LinkedIn or interview (with credit)
+
+3. PROHIBITED (without prior written permission from the copyright holder)
+   - Commercial use of any kind
+   - Use in production systems or operational environments
+   - Copying, modifying or redistributing the code outside GitHub evaluation
+   - Removing copyright / NOTICE / SECURITY notices
+   - Using credentials, endpoints, schemas or know-how derived from this
+     repository to access third-party systems (SERASA, CADIN, SIFAMA, ANTT, etc.)
+
+4. INSTITUTIONAL / SENSITIVE CONTEXT
+   Parts of this project relate to workflows developed in the context of
+   CCOBI–SERASA / ANTT. Publication here is for portfolio demonstration only
+   and does not constitute authorization by ANTT, Serasa Experian, PGFN or
+   any other entity to use, replicate or operate the software.
+
+5. DATA PROTECTION (LGPD)
+   This public repository must NOT contain real personal data (CPF/CNPJ,
+   names, addresses, financial values, logs or production databases).
+   Any sample data is synthetic or empty. The author assumes no liability
+   for misuse of data that a third party may introduce after cloning.
+
+6. NO WARRANTY
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+   OR IMPLIED. THE AUTHOR SHALL NOT BE LIABLE FOR ANY CLAIM, DAMAGES OR
+   OTHER LIABILITY ARISING FROM VIEWING, CLONING OR MISUSE OF THIS CODE.
+
+7. CONTACT
+   For licensing permissions: ruan.natividade1@icloud.com
+   LinkedIn: https://www.linkedin.com/in/ruan-natividade
+   GitHub: https://github.com/NatiivaZ
+
+By accessing this repository you acknowledge and agree to these terms.
